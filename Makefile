@@ -86,6 +86,9 @@ ifdef KEEP_ISO
     KEEP_ISO_FLAG = --keep-iso
 endif
 
+# ipv6
+IPV6_INSTALL_PARAMS := $(or $(IPV6_INSTALL_PARAMS),HTTP_PROXY_URL='http://[1001:db8::1]:3128' IPv6=yes IPv4=no VIP_DHCP_ALLOCATION=no  NO_PROXY_VALUES='1001:db8::/120,2003:db8::/112,2002:db8::/53,.test-infra-cluster-assisted-installer.redhat.com')
+
 SSO_URL := $(or $(SSO_URL), https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token)
 OCM_BASE_URL := $(or $(OCM_BASE_URL), https://api-integration.6943.hive-integration.openshiftapps.com)
 # minikube profile is used to manage multiple minikube instances
@@ -335,6 +338,13 @@ download_iso:
 
 download_iso_for_remote_use: deploy_assisted_service
 	skipper make $(SKIPPER_PARAMS) _download_iso NAMESPACE_INDEX=$(shell bash scripts/utils.sh get_namespace_index $(NAMESPACE) $(OC_FLAG)) $(OC_FLAG)) NAMESPACE=$(NAMESPACE)
+
+
+########
+# IPv6 #
+########
+make run_full_flow_with_ipv6:
+	$(MAKE) run_full_flow $(IPV6_INSTALL_PARAMS)
 
 ########
 # Test #
