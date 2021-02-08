@@ -3,6 +3,7 @@ import logging
 import itertools
 import ipaddress
 import json
+import re
 import os
 import shlex
 import shutil
@@ -670,15 +671,15 @@ def get_libvirt_nodes_from_tf_state(network_names, tf_state):
 
 
 def extract_nodes_from_tf_state(tf_state, network_names, role):
-    domains = next(r["instances"] for r in tf_state.resources if r["type"] == "libvirt_domain" and r["name"] == role)
     data = {}
-    for d in domains:
-        for nic in d["attributes"]["network_interface"]:
+    for domains in [r["instances"] for r in tf_state.resources if r["type"] == "libvirt_domain" and role in r["name"]]:
+        for d in domains:
+            for nic in d["attributes"]["network_interface"]:
 
-            if nic["network_name"] not in network_names:
-                continue
+                if nic["network_name"] not in network_names:
+                    continue
 
-            data[nic["mac"]] = {"ip": nic["addresses"], "name": d["attributes"]["name"], "role": role}
+                data[nic["mac"]] = {"ip": nic["addresses"], "name": d["attributes"]["name"], "role": role}
 
     return data
 
@@ -829,3 +830,31 @@ def get_assisted_controller_status(kubeconfig):
 
     log.info(f'{response.stdout}')
     return response.stdout
+
+
+def _render_socket_endpoint(ip, port):
+    return f'{ip}:{port}' if '.' in ip else f'[{ip}]:{port}'
+
+
+def _render_upstream_server(ip, port):
+    return f'\t\tserver {_render_socket_endpoint(ip, port)};'
+
+
+def _render_upstream_servers(master_ips, port):
+    return '\n'.join([_render_upstream_server(ip, port) for ip in master_ips]) + '\n'
+
+
+def _render_upstream_block(master_ips, port):
+    return f'\tupstream upstream_{port} {{\n{_render_upstream_servers(master_ips, port)}\t}}\n'
+
+
+def _render_server_block(load_balancer_ip, port):
+    return f'\tserver {{\n\t\tlisten {_render_socket_endpoint(load_balancer_ip, port)};\n\t\tproxy_pass upstream_{port};\n\t}}\n'
+
+
+def _render_port_entities(load_balancer_ip, master_ips, port):
+    return _render_upstream_block(master_ips, port) + _render_server_block(load_balancer_ip, port)
+
+
+def render_load_balancer_config_file(load_balancer_ip, master_ips):
+    return 'stream {\n' + '\n'.join([_render_port_entities(load_balancer_ip, master_ips, port) for port in [443, 6443, 22623]]) + '}\n'

@@ -127,7 +127,7 @@ function config_firewalld() {
 function config_squid() {
     echo "Config squid"
     sudo dnf install -y squid
-    sudo sed -i  -e '/^.*allowed_ips.*$/d' -e '/^acl CONNECT.*/a acl allowed_ips src 1001:db8::/120' -e '/^http_access deny all/i http_access allow allowed_ips'  /etc/squid/squid.conf
+    sudo sed -i  -e '/^.*allowed_ips.*$/d' -e '/^acl CONNECT.*/a acl allowed_ips src 1001:db8::/120' -e '/^acl CONNECT.*/a acl allowed_ips src 1001:db8:0:200::/120' -e '/^http_access deny all/i http_access allow allowed_ips'  /etc/squid/squid.conf
     sudo systemctl restart squid
     sudo firewall-cmd --zone=libvirt --add-port=3128/tcp
     sudo firewall-cmd --zone=libvirt --add-port=3129/tcp
@@ -160,6 +160,21 @@ function config_chronyd() {
   sudo firewall-cmd --zone=libvirt --add-port=123/udp
 }
 
+function config_nginx() {
+  echo "Config nginx"
+
+  cat <<EOF | sudo podman build --tag load_balancer:latest -
+FROM quay.io/centos/centos:8.3.2011
+RUN dnf install -y nginx
+RUN sed -i -e '\$a include /etc/nginx/conf.d/*.conf;' -e  '/^http {/,\$d'  /etc/nginx/nginx.conf
+CMD ["bash", "-c", "while /bin/true ; do (ps -ef | grep -v grep | grep -q nginx && nginx -s reload) || nginx ; sleep 60 ; done"]
+EOF
+  sudo podman rm -f load_balancer || /bin/true
+  sudo mkdir -p $HOME/.test-infra/etc/nginx/conf.d
+  sudo firewall-cmd --zone=libvirt --add-port=6443/tcp
+  sudo firewall-cmd --zone=libvirt --add-port=22623/tcp
+}
+
 function additional_configs() {
     if [ "${ADD_USER_TO_SUDO}" != "n" ]; then
         current_user=$(whoami)
@@ -186,6 +201,7 @@ function additional_configs() {
 
     echo "enabling ipv6"
     sudo sed -ir 's/net.ipv6.conf.all.disable_ipv6[[:blank:]]*=[[:blank:]]*1/net.ipv6.conf.all.disable_ipv6 = 0/g' /etc/sysctl.conf
+    sudo sed -i -e '/net.core.somaxconn/d' -e '$a net.core.somaxconn = 2000' /etc/sysctl.conf
     sudo sysctl --load
 }
 
@@ -197,4 +213,5 @@ config_firewalld
 config_squid
 fix_ipv6_routing
 config_chronyd
+config_nginx
 additional_configs

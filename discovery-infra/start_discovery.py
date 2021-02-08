@@ -390,6 +390,10 @@ def nodes_flow(client, cluster_name, cluster):
         tf=tf
     )
 
+    is_ip4 =  machine_net.has_ip_v4 or not machine_net.has_ip_v6
+    main_cidr = args.vm_network_cidr if is_ip4 else args.vm_network_cidr6
+    secondary_cidr = machine_net.provisioning_cidr_v4 if is_ip4 else machine_net.provisioning_cidr_v6
+
     if client:
         cluster_info = client.cluster_get(cluster.id)
         macs = utils.get_libvirt_nodes_macs(nodes_details["libvirt_network_name"])
@@ -407,9 +411,9 @@ def nodes_flow(client, cluster_name, cluster):
             )
 
             if args.master_count == 1:
-                is_ip4 =  machine_net.has_ip_v4 or not machine_net.has_ip_v6
-                cidr = args.vm_network_cidr if is_ip4 else args.vm_network_cidr6
-                tf.change_variables({"single_node_ip": helper_cluster.Cluster.get_ip_for_single_node(client, cluster.id, cidr, ipv4_first=is_ip4)})
+                tf.change_variables({"single_node_ip": helper_cluster.Cluster.get_ip_for_single_node(client, cluster.id, main_cidr, ipv4_first=is_ip4)})
+            elif is_none_platform_mode():
+                set_cluster_vips(client, cluster.id, machine_net)
             elif args.vip_dhcp_allocation:
                 set_cluster_machine_cidr(client, cluster.id, machine_net)
             else:
@@ -418,6 +422,12 @@ def nodes_flow(client, cluster_name, cluster):
             log.info("VIPs already configured")
 
         set_hosts_roles(client, cluster, nodes_details, machine_net, tf, args.master_count, args.with_static_ips)
+
+        if is_none_platform_mode() and args.master_count > 1:
+            master_ips = helper_cluster.Cluster.get_master_ips(client, cluster.id, main_cidr) + helper_cluster.Cluster.get_master_ips(client, cluster.id, secondary_cidr)
+            load_balancer_ip = _get_host_ip_from_cidr(machine_net.cidr_v6 if machine_net.has_ip_v6 and not machine_net.has_ip_v4 else machine_net.cidr_v4)
+            load_balancer_config_file = utils.render_load_balancer_config_file(load_balancer_ip, master_ips)
+            tf.change_variables({"load_balancer_ip": load_balancer_ip, "load_balancer_config_file": load_balancer_config_file})
 
         utils.wait_till_hosts_with_macs_are_in_status(
             client=client,
